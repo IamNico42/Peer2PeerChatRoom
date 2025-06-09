@@ -1,6 +1,12 @@
 import socket
 import threading
-from protocol import build_message, parse_message
+from protocol import Protocol
+
+class Client:
+    def __init__(self, conn, ip, udp_port):
+        self.conn = conn
+        self.ip = ip
+        self.udp_port = udp_port
 
 class ChatServer:
     def __init__(self, host='0.0.0.0', port=9000):
@@ -17,40 +23,35 @@ class ChatServer:
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind((self.host, self.port))
         self._sock.listen()
-        self._sock.settimeout(1.0) # Timeout für accept, damit wir regelmäßig prüfen können, ob self.running noch True ist
+        self._sock.settimeout(1.0)
 
         print(f"[SERVER] Listening on {self.host}:{self.port}")
         while self.running:
             try:
                 conn, addr = self._sock.accept()
             except socket.timeout:
-                continue  # Timeout, prüf erneut self.running
+                continue
             except OSError:
-                break  # Socket wurde geschlossen
+                break
             print(f"[NEW CONNECTION] {addr}")
             threading.Thread(target=self.handle_client, args=(conn,), daemon=True).start()
 
-        # Cleanup beim Beenden
+        self.cleanup()
+
+    def cleanup(self):
         try:
             self._sock.close()
         except:
             pass
         with self.lock:
-            for conn in self.clients.values():
+            for client in self.clients.values():
                 try:
-                    conn.shutdown(socket.SHUT_RDWR)
-                    conn.close()
+                    client.conn.shutdown(socket.SHUT_RDWR)
+                    client.conn.close()
                 except:
                     pass
             self.clients.clear()
         print("[SERVER] Shutdown complete.")
-
-    def list_clients(self):
-        with self.lock:
-            return [
-                f"{nick} @ {ip}:{udp}" for nick, (_, ip, udp) in self.clients.items()
-            ]
-
 
     def shutdown(self):
         self.running = False
@@ -59,78 +60,83 @@ class ChatServer:
         except:
             pass
 
+    def list_clients(self):
+        with self.lock:
+            return [f"{nick} @ {c.ip}:{c.udp_port}" for nick, c in self.clients.items()]
+
     def handle_client(self, conn):
         nickname = None
-        buffer = ""
+        recv_buffer = b""
         try:
             while True:
-                try:
-                    data = conn.recv(4096).decode()
-                    if not data:
-                        break  # Verbindung wurde ordentlich beendet
-                    buffer += data
-                    while "\n" in buffer:
-                        line, buffer = buffer.split("\n", 1)
-                        cmd, args = parse_message(line)
-                        if cmd == "REGISTER" and len(args) >= 2:
-                            nickname, udp = args[0], args[1]
-                            client_ip = conn.getpeername()[0]
-                            
-                            with self.lock:
-                                if nickname in self.clients:
-                                    print(f"[REJECTED] Nickname '{nickname}' schon vergeben.")
-                                    try:
-                                        conn.sendall(build_message("ERROR", "Nickname bereits vergeben").encode())
-                                    except:
-                                        pass
-                                    conn.close()
-                                    return  # Neue Verbindung wird abgelehnt
-                                self.clients[nickname] = (conn, client_ip, udp)
-
-                            conn.sendall(build_message("WELCOME", nickname).encode())
-                            self.send_userlist_initial(conn)
-                            self.notify_all("USER_JOINED", nickname, client_ip, udp)
-                        elif cmd == "BROADCAST" and len(args) >= 2:
-                            sender = args[0]
-                            text = " ".join(args[1:])
-                            print(f"[DEBUG Server] Broadcast von {sender}: {text}")
-                            self.broadcast(sender, text)
-                        elif cmd == "QUIT":
-                            break
-                except (ConnectionResetError, ConnectionAbortedError):
-                    break  # Verbindung wurde vom Client beendet
-                except Exception as e:
-                    print(f"[ERROR] Bei der Verarbeitung eines Clients: {e}")
+                data = conn.recv(4096)
+                if not data:
                     break
+                recv_buffer += data
+                messages, recv_buffer = Protocol.decode_stream(recv_buffer)
+
+                for raw in messages:
+                    cmd, args = Protocol.extract_command(raw)
+
+                    if cmd == "REGISTER":
+                        try:
+                            nickname, udp = Protocol.read_register(args)
+                        except ValueError as e:
+                            conn.sendall(Protocol.error(str(e)))
+                            continue
+
+                        client_ip = conn.getpeername()[0]
+                        with self.lock:
+                            if nickname in self.clients:
+                                conn.sendall(Protocol.error("Nickname bereits vergeben"))
+                                conn.close()
+                                return
+                            self.clients[nickname] = Client(conn, client_ip, udp)
+
+                        conn.sendall(Protocol.welcome(nickname))
+                        self.send_userlist_initial(conn)
+                        self.notify_all(Protocol.user_joined(nickname, client_ip, udp))
+
+                    elif cmd == "BROADCAST":
+                        try:
+                            sender, message = Protocol.read_broadcast(args)
+                            print(f"[DEBUG Server] Broadcast von {sender}: {message}")
+                            self.broadcast(sender, message)
+                        except ValueError as e:
+                            conn.sendall(Protocol.error(str(e)))
+
+                    elif cmd == "QUIT":
+                        return
         finally:
             with self.lock:
-                if nickname in self.clients and self.clients[nickname][0] == conn:
+                if nickname in self.clients and self.clients[nickname].conn == conn:
                     del self.clients[nickname]
             conn.close()
             print(f"[INFO] {nickname or 'Unbekannt'} disconnected.")
             if nickname:
-                self.notify_all("USER_LEFT", nickname)
+                self.notify_all(Protocol.user_left(nickname))
 
     def broadcast(self, sender, message):
         with self.lock:
-            for nick, conn_info in self.clients.items():
-                if nick != sender:
-                    conn = conn_info[0]
-                    try:
-                        conn.sendall(build_message("BROADCAST_MSG", sender, message).encode())
-                    except:
-                        pass
+            for client in self.clients.values():
+                try:
+                    client.conn.sendall(Protocol.broadcast(sender, message))
+                except:
+                    pass
 
     def send_userlist_initial(self, conn):
         with self.lock:
-            entries = [f"{n}:{ip}:{u}" for n, (_, ip, u) in self.clients.items()]
-        conn.sendall(build_message("USERLIST", *entries).encode())
+            entries = [
+                f"{nick}:{client.ip}:{client.udp_port}"
+                for nick, client in self.clients.items()
+            ]
+        message = Protocol.user_list(*entries)
+        conn.sendall(message)
 
-    def notify_all(self, cmd, *args):
-        msg = build_message(cmd, *args)
+    def notify_all(self, msg):
         with self.lock:
-            for n, (c, _, _) in self.clients.items():
+            for c in self.clients.values():
                 try:
-                    c.sendall(msg.encode())
+                    c.conn.sendall(msg)
                 except:
                     pass
