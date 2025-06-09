@@ -1,5 +1,6 @@
 import socket
 import threading
+from .chat_session import PrivateChatSession
 from ..network.protocol import Protocol
 from datetime import datetime
 
@@ -93,7 +94,16 @@ class ChatCore:
             conn, addr = server_sock.accept()
             peer_nickname = conn.recv(1024).decode().strip()
             conn.sendall(self.nickname.encode())
-            self._trigger("on_private_chat", conn, addr[0], addr[1], peer_nickname, self.nickname)
+            session = PrivateChatSession(
+                conn=conn,
+                gui_callback=lambda msg: self._trigger("on_log", msg),
+                local_nick=self.nickname,
+                peer_nick=peer_nickname,
+                peer_ip=addr[0],
+                peer_port=addr[1]
+            )
+            session.start()
+            self._trigger("on_private_chat", session)
         except socket.timeout:
             self._trigger("on_log", "[INFO] Deine Chat-Anfrage wurde nicht beantwortet.")
         finally:

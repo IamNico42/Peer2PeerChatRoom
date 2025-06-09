@@ -1,15 +1,20 @@
+# client.py – refaktoriert für PrivateChatSession
 from .core import ChatCore
 from .gui import ChatGUI
 import tkinter as tk
+from tkinter import messagebox
 import threading
 import socket
+import queue
 from ..network.protocol import Protocol
+from .chat_session import PrivateChatSession
 
 class ChatClientController:
     def __init__(self):
         self.root = tk.Tk()
         self.core = None
         self.gui = None
+        self.chat_requests = queue.Queue()
 
     def start(self):
         self.gui = ChatGUI(self.root, self)
@@ -20,7 +25,6 @@ class ChatClientController:
         server_ip = self.gui.server_ip.get()
         server_port = self.gui.server_port.get()
         if not server_ip or not nickname:
-            from tkinter import messagebox
             messagebox.showerror("Fehler", "Bitte Server-IP und Nickname eingeben.")
             return
         self.connect(nickname, server_ip, server_port)
@@ -41,7 +45,6 @@ class ChatClientController:
             self.gui.connect_button.config(state="disabled")
             self.gui.disconnect_button.config(state="normal")
         else:
-            from tkinter import messagebox
             messagebox.showerror("Fehler", f"Verbindung fehlgeschlagen: {info}")
             self.gui.status_label.config(text="Nicht verbunden", fg="red")
 
@@ -71,7 +74,6 @@ class ChatClientController:
             udp_port = int(udp)
             self.core.send_chat_request(ip, udp_port, nick)
         except:
-            from tkinter import messagebox
             messagebox.showerror("Fehler", "Ungültiger Eintrag in der Userliste.")
 
     def handle_tcp_command(self, cmd, args):
@@ -102,13 +104,7 @@ class ChatClientController:
         if cmd == "CHAT_REQUEST":
             try:
                 port = Protocol.read_chat_request(args)
-                if hasattr(self, 'chat_requests'):
-                    self.chat_requests.put((addr[0], port))
-                else:
-                    import queue
-                    self.chat_requests = queue.Queue()
-                    self.chat_requests.put((addr[0], port))
-                self.gui.log(f"[UDP] Chat-Anfrage von {addr[0]}:{port}")
+                self.chat_requests.put((addr[0], addr[1], port))
                 self.root.after(1000, self.check_chat_requests)
             except ValueError:
                 self.gui.log(f"[UDP] Ungültige CHAT_REQUEST von {addr}")
@@ -117,20 +113,28 @@ class ChatClientController:
 
     def check_chat_requests(self):
         while not self.chat_requests.empty():
-            ip, port = self.chat_requests.get()
-            from tkinter import messagebox
-            if messagebox.askyesno("Chat-Anfrage", f"{ip}:{port} möchte mit dir chatten. Annehmen?"):
+            ip, udp_port, tcp_port = self.chat_requests.get()
+            if messagebox.askyesno("Chat-Anfrage", f"{ip}:{tcp_port} möchte mit dir chatten. Annehmen?"):
                 try:
                     conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    conn.connect((ip, port))
+                    conn.connect((ip, tcp_port))
                     conn.sendall(self.core.nickname.encode())
                     peer_nickname = conn.recv(1024).decode().strip()
-                    self.gui.show_private_chat(conn, ip, port, peer_nickname, self.core.nickname)
+                    session = PrivateChatSession(
+                        conn=conn,
+                        gui_callback=self.gui.log,
+                        local_nick=self.core.nickname,
+                        peer_nick=peer_nickname,
+                        peer_ip=ip,
+                        peer_port=tcp_port
+                    )
+                    session.start()
+                    self.gui.show_private_chat(session)
                 except Exception as e:
                     self.gui.log(f"[FEHLER] Verbindung fehlgeschlagen: {e}")
             else:
                 try:
-                    self.core.udp_sock.sendto(Protocol.chat_rejected(), (ip, port))
+                    self.core.udp_sock.sendto(Protocol.chat_rejected(), (ip, udp_port))
                 except Exception as e:
                     self.gui.log(f"[WARNUNG] CHAT_REJECTED konnte nicht gesendet werden: {e}")
         self.root.after(1000, self.check_chat_requests)
