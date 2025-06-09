@@ -1,6 +1,6 @@
 import socket
 import threading
-from protocol import Protocol
+from ..network.protocol import Protocol
 from datetime import datetime
 
 class ChatCore:

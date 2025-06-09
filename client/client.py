@@ -1,9 +1,9 @@
-from core import ChatCore
-from gui import ChatGUI
+from .core import ChatCore
+from .gui import ChatGUI
 import tkinter as tk
 import threading
 import socket
-from protocol import Protocol
+from ..network.protocol import Protocol
 
 class ChatClientController:
     def __init__(self):
