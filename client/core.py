@@ -105,7 +105,7 @@ class ChatCore:
             session.start()
             self._trigger("on_private_chat", session)
         except socket.timeout:
-            self._trigger("on_log", "[INFO] Deine Chat-Anfrage wurde nicht beantwortet.")
+            self._trigger("on_log", "[INFO] Deine Chat-Anfrage wurde nicht beantwortet oder abgelehnt.")
         finally:
             server_sock.close()
 

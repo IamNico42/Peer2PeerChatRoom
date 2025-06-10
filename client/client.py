@@ -37,6 +37,7 @@ class ChatClientController:
         self.core.set_callback("on_tcp_command", self.handle_tcp_command)
         self.core.set_callback("on_udp_command", self.handle_udp_command)
         self.core.set_callback("on_private_chat", self.gui.show_private_chat)
+        self.core.set_callback("on_private_chat_request", self.on_private_chat_request)
         threading.Thread(target=self.core.connect, daemon=True).start()
 
     def on_connect(self, success, info):
@@ -56,6 +57,7 @@ class ChatClientController:
         self.gui.status_label.config(text="Nicht verbunden", fg="red")
         self.gui.connect_button.config(state="normal")
         self.gui.disconnect_button.config(state="disabled")
+        self.gui.clear_user_list()
 
     def send_broadcast_from_gui(self, event=None):
         message = self.gui.input_entry.get().strip()
@@ -114,7 +116,13 @@ class ChatClientController:
     def check_chat_requests(self):
         while not self.chat_requests.empty():
             ip, udp_port, tcp_port = self.chat_requests.get()
-            if messagebox.askyesno("Chat-Anfrage", f"{ip}:{tcp_port} möchte mit dir chatten. Annehmen?"):
+            accept = self.gui.show_dark_popup(
+                "Chat-Anfrage",
+                f"{ip}:{tcp_port} möchte mit dir chatten. Annehmen?",
+                yes_text="Annehmen",
+                no_text="Ablehnen"
+            )
+            if accept:
                 try:
                     conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     conn.connect((ip, tcp_port))
@@ -138,6 +146,14 @@ class ChatClientController:
                 except Exception as e:
                     self.gui.log(f"[WARNUNG] CHAT_REJECTED konnte nicht gesendet werden: {e}")
         self.root.after(1000, self.check_chat_requests)
+
+    def on_private_chat_request(self, ip, udp_port, tcp_port):
+        return self.gui.show_dark_popup(
+            "Chat-Anfrage",
+            f"{ip}:{tcp_port} möchte mit dir chatten. Annehmen?",
+            yes_text="Annehmen",
+            no_text="Ablehnen"
+        )
 
     def on_closing(self):
         self.disconnect()
