@@ -1,5 +1,6 @@
 import socket
 import threading
+import unicodedata
 from .chat_session import PrivateChatSession
 from ..network.protocol import Protocol
 from datetime import datetime
@@ -73,6 +74,8 @@ class ChatCore:
 
     def send_broadcast(self, message):
         if message and self.sock:
+            # Unicode-Normalisierung für Emojis
+            message = unicodedata.normalize("NFC", message)
             self.sock.sendall(Protocol.broadcast(self.nickname, message))
 
     def send_chat_request(self, target_ip, target_udp_port, target_nick=None):
@@ -93,6 +96,7 @@ class ChatCore:
         try:
             conn, addr = server_sock.accept()
             peer_nickname = conn.recv(1024).decode().strip()
+            peer_nickname = unicodedata.normalize("NFC", peer_nickname)
             conn.sendall(self.nickname.encode())
             session = PrivateChatSession(
                 conn=conn,

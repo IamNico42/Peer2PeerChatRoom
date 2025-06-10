@@ -1,6 +1,7 @@
 # gui.py – angepasst für PrivateChatSession
 import tkinter as tk
-from tkinter import messagebox, scrolledtext
+from .emoji_bar import EmojiBar
+
 
 class ChatGUI:
     def __init__(self, master, controller):
@@ -58,6 +59,28 @@ class ChatGUI:
         send_btn = tk.Button(input_frame, text="Senden", command=self.controller.send_broadcast_from_gui, bg="#3ba55d", fg="#f6f6f6", relief="flat", activebackground="#2d7d46")
         send_btn.pack(side="left", padx=(8,0))
 
+        # --- Emoji Bar ---
+        self.emoji_bar = EmojiBar(self.master, self.input_entry)
+        # Immer gepackt, aber initial Höhe 0 (unsichtbar)
+        self.emoji_bar.pack(padx=15, pady=(0, 4), fill="x")
+        # self.emoji_bar.set_height(0)  # Entfernen
+        self.emoji_bar.clip.configure(height=0)
+        self.emoji_bar.visible = False
+
+
+        self.toggle_emoji_btn = tk.Button(
+            input_frame,
+            text="😊",
+            command=self.emoji_bar.toggle,
+            bg="#23272f",
+            fg="#f6f6f6",
+            relief="flat",
+            font=("Segoe UI Emoji", 12),
+            activebackground="#36393f"
+        )
+        self.toggle_emoji_btn.pack(side="left", padx=(6, 0))
+
+
         # --- Bottom/Userlist ---
         bottom_frame = tk.Frame(self.master, bg="#23272f")
         bottom_frame.pack(padx=15, pady=5, fill="both", expand=True)
@@ -104,7 +127,7 @@ class ChatGUI:
         chat_box.bind("<Button-5>", lambda e: chat_box.yview_scroll(1, "units"))   # Linux
 
         input_frame = tk.Frame(chat_window, bg="#23272f")
-        input_frame.grid(row=1, column=0, sticky="ew", padx=15, pady=(0,8))
+        input_frame.grid(row=1, column=0, sticky="ew", padx=15, pady=(0,2))
         input_frame.columnconfigure(0, weight=1)
         input_entry_frame = tk.Frame(input_frame, bg="#23272f", highlightbackground="#36393f", highlightthickness=2, bd=0)
         input_entry_frame.grid(row=0, column=0, sticky="ew")
@@ -112,20 +135,37 @@ class ChatGUI:
         input_entry = tk.Entry(input_entry_frame, bg="#23272f", fg="#d1d1d1", insertbackground="#d1d1d1", relief="flat", font=("Segoe UI", 11), borderwidth=0, highlightthickness=0)
         input_entry.grid(row=0, column=0, sticky="ew", padx=2, pady=2)
 
-        send_btn = tk.Button(input_frame, text="Senden", command=lambda: send_msg(), bg="#3ba55d", fg="#f6f6f6", relief="flat", activebackground="#2d7d46")
+        def send_msg(event=None):
+            msg = input_entry.get()
+            if msg.strip():
+                session.send(msg)
+                input_entry.delete(0, tk.END)
+
+        send_btn = tk.Button(input_frame, text="Senden", command=send_msg, bg="#3ba55d", fg="#f6f6f6", relief="flat", activebackground="#2d7d46")
         send_btn.grid(row=0, column=1, padx=(8,0))
+
+        # --- Emoji Bar für Private Chat ---
+        emoji_bar = EmojiBar(chat_window, input_entry)
+        emoji_bar.grid(row=3, column=0, sticky="ew", padx=15, pady=(0, 4))
+        emoji_bar.set_height(0)
+        toggle_emoji_btn = tk.Button(
+            input_frame,
+            text="😊",
+            command=emoji_bar.toggle,
+            bg="#23272f",
+            fg="#f6f6f6",
+            relief="flat",
+            font=("Segoe UI Emoji", 12),
+            activebackground="#36393f"
+        )
+        toggle_emoji_btn.grid(row=0, column=2, padx=(6, 0))
+
 
         def log_chat(message):
             chat_box.config(state='normal')
             chat_box.insert(tk.END, message + "\n")
             chat_box.config(state='disabled')
             chat_box.yview(tk.END)
-
-        def send_msg(event=None):
-            msg = input_entry.get()
-            if msg.strip():
-                session.send(msg)
-                input_entry.delete(0, tk.END)
 
         input_entry.bind("<Return>", send_msg)
         chat_window.protocol("WM_DELETE_WINDOW", lambda: (session.close(), chat_window.destroy()))

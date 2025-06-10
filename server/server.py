@@ -1,5 +1,6 @@
 import socket
 import threading
+import unicodedata
 from ..network.protocol import Protocol
 
 class Client:
@@ -100,6 +101,8 @@ class ChatServer:
                     elif cmd == "BROADCAST":
                         try:
                             sender, message = Protocol.read_broadcast(args)
+                            # Unicode-Normalisierung für Emojis
+                            message = unicodedata.normalize("NFC", message)
                             print(f"[DEBUG Server] Broadcast von {sender}: {message}")
                             self.broadcast(sender, message)
                         except ValueError as e:
